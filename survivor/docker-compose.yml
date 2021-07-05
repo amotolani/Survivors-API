@@ -1,0 +1,95 @@
+version: "3.3"
+
+services:
+  postgres:
+    image: postgres:13-alpine
+    volumes:
+      - /Users/dadelowo/mnt/data2:/var/lib/postgresql/data
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=$DATABASE_NAME
+      - POSTGRES_USER=$DATABASE_USER
+      - POSTGRES_PASSWORD=$DATABASE_PASS
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 40s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - survivor
+
+  logstash:
+    image: logstash:7.10.1
+    ports:
+      - "9600:9600"
+      - "5959:5959"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    volumes:
+      - type: bind
+        source: ./elk/logstash.yml
+        target: /usr/share/logstash/config/logstash.yml
+        read_only: true
+      - type: bind
+        source: ./elk/logstash.conf
+        target: /usr/share/logstash/pipeline/logstash.conf
+        read_only: true
+    networks:
+      - survivor
+
+  elasticsearch:
+    image: elasticsearch:7.10.1
+    ports:
+      - "9200:9200"
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: ./elk/elasticsearch.yml
+        target: /usr/share/elasticsearch/config/elasticsearch.yml
+        read_only: true
+    networks:
+      - survivor
+
+  kibana:
+    image: kibana:7.10.1
+    ports:
+      - "5601:5601"
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    volumes:
+      - type: bind
+        source: ./elk/kibana.yml
+        target: /usr/share/kibana/config/kibana.yml
+        read_only: true
+    networks:
+      - survivor
+
+  survivor-service:
+    image: devopzguru/survivorapi:1.0
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - logstash
+      - elasticsearch
+    networks:
+      - survivor
+
+networks:
+  survivor:
+    driver: bridge

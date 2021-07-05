@@ -1,0 +1,386 @@
+---
+# create persistent volume claim
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: postgres-pv-claim
+  labels:
+    env: production
+    app: survivor
+    tier: database
+spec:
+  storageClassName: standard-rwo
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# create configMap for ELK
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-configmap
+  labels:
+    env: production
+    tier: elk
+    app: logstash
+
+data:
+  logstash.conf: |
+      input {
+        tcp {
+          port => 5959
+          codec => json
+        }
+      }
+
+      output {
+        elasticsearch {
+          hosts =>  [ "http://elasticsearch:9200" ]
+          index => "survivorapi-logs"
+        }
+      }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kibana-configmap
+  labels:
+    env: production
+    tier: elk
+    app: kibana
+
+data:
+  kibana.yml: |
+    server.name: kibana
+    server.host: 0.0.0.0
+    elasticsearch.hosts: [ "http://elasticsearch:9200" ]
+---
+# create persistent volume claim
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: es-pv-claim
+  labels:
+    env: production
+    app: elasticsearch
+    tier: elk
+spec:
+  storageClassName: standard-rwo
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi # Claim capacity
+---
+# create es deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    env: production
+    app: elasticsearch
+    tier: elk
+  name: elasticsearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      env: production
+      app: elasticsearch
+      tier: elk
+  template:
+    metadata:
+      labels:
+        env: production
+        app: elasticsearch
+        tier: elk
+    spec:
+      containers:
+      - image: elasticsearch:7.10.1
+        name: elasticsearch
+        ports:
+          - containerPort: 9200
+        env:
+          - name: cluster.name
+            value: survivor-elk
+          - name: network.host
+            value: 0.0.0.0
+          - name: discovery.type
+            value: single-node
+          - name: discovery.seed_hosts
+            value: elasticsearch
+          - name: ES_JAVA_OPTS
+            value: "-Xms512m -Xmx512m"
+        volumeMounts:
+          - mountPath: /var/lib/elasticsearch/   # mount persistent volume claim on the es pod to persist data on the the host machine
+            name: es
+      volumes:
+        - name: es # include persistent volume claim in the deployment
+          persistentVolumeClaim:
+            claimName: es-pv-claim
+
+---
+# create es service to expose es deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+spec:
+  type: ClusterIP
+  selector: # label selectors to map service to es deployment
+    env: production
+    app: elasticsearch
+    tier: elk
+  ports:
+    - port: 9200
+      targetPort: 9200
+
+---
+# create kibana deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    env: production
+    app: kibana
+    tier: elk
+  name: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      env: production
+      app: kibana
+      tier: elk
+  template:
+    metadata:
+      labels:
+        env: production
+        app: kibana
+        tier: elk
+    spec:
+      containers:
+      - image: kibana:7.10.1
+        name: kibana
+        ports:
+          - containerPort: 5601
+        env:
+          - name: ELASTICSEARCH_HOSTS
+            value: http://elasticsearch:9200
+        volumeMounts:  # mount configmap
+          - mountPath:  /usr/share/kibana/config
+            name: config
+            readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: kibana-configmap
+
+---
+# create kibana service to expose kibana deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+spec:
+  type: LoadBalancer
+  selector: # label selectors to map service to kibana deployment
+    env: production
+    app: kibana
+    tier: elk
+  ports:
+      - port: 5601
+        targetPort: 5601
+---
+# create logstash deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    env: production
+    app: logstash
+    tier: elk
+  name: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      env: production
+      app: logstash
+      tier: elk
+  template:
+    metadata:
+      labels:
+        env: production
+        app: logstash
+        tier: elk
+    spec:
+      containers:
+      - image: logstash:7.10.1
+        name: logstash
+        ports:
+          - containerPort: 5959
+        volumeMounts:  # mount configmap
+          - mountPath:  /usr/share/logstash/pipeline
+            name: config
+            readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: logstash-configmap
+
+---
+# create logstash service to expose logstash deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+spec:
+  selector: # label selectors to map logstash to logstash deployment
+    env: production
+    app: logstash
+    tier: elk
+  ports:
+      - port: 5959
+        targetPort: 5959
+
+---
+# create database deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    env: production
+    app: survivor
+    tier: database
+spec:
+  selector: # label selectors to map pod templates to database deployment
+    matchLabels:
+      env: production
+      app: survivor
+      tier: database
+  replicas: 1 # tells deployment to run 1 pod matching the template
+  template:
+    metadata:
+      labels:
+        env: production
+        app: survivor
+        tier: database
+    spec:
+      containers:  # describe containers for database pod
+        - name: postgres
+          image: postgres:13-alpine
+          imagePullPolicy: "IfNotPresent"
+          ports:
+            - containerPort: 5432
+          env:   # setting selected environment variables from configured secret
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: survivor-secrets
+                  key: DATABASE_NAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: survivor-secrets
+                  key: DATABASE_PASS
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: survivor-secrets
+                  key: DATABASE_USER
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          volumeMounts:  # mount persistent volume claim on the database pod to persist data on the the host machine
+            - mountPath: /var/lib/postgresql/data
+              name: postgredb
+      volumes:
+        - name: postgredb # include persistent volume claim in the deployment
+          persistentVolumeClaim:
+            claimName: postgres-pv-claim
+---
+# create database service to expose database deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    env: production
+    app: survivor
+    tier: database
+spec:
+  selector:  # label selectors to map service to database deployment
+    env: production
+    app: survivor
+    tier: database
+  ports:
+   - port: 5432
+     targetPort: 5432
+
+---
+# create application deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: survivor-deployment
+  labels:
+    env: production
+    tier: backend
+    app: survivor
+spec:
+  selector:  # label selectors to map pod templates to application deployment
+    matchLabels:
+      env: production
+      app: survivor
+      tier: backend
+  replicas: 3 # tells deployment to run 3 pods matching the template
+  template:
+    metadata:
+      labels:
+        env: production
+        app: survivor
+        tier: backend
+    spec:
+      containers: # describe containers for application pods
+      - name: survivorapi
+        image: devopzguru/survivorapi:1.0
+        ports:
+        - containerPort: 8000
+        envFrom: # setting all environment variables from configured secret
+          - secretRef:
+              name: survivor-secrets
+      initContainers: # configure init container to confirm availability of the database before starting application pods
+        - name: database-check
+          image: alpine:3.13
+          command: [ 'sh', '-c', "apk add --no-cache postgresql-client; env; psql -h $DATABASE_HOST -d $DATABASE_NAME -U $DATABASE_USER " ]
+          envFrom:
+            - secretRef:
+                name: survivor-secrets
+          env:
+            - name: PGPASSWORD # setting psql environment variable from configured secret
+              valueFrom:
+                secretKeyRef:
+                  name: survivor-secrets
+                  key: DATABASE_PASS
+
+---
+# create application service to expose application deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: survivor-service
+spec:
+  type: LoadBalancer
+  selector: # label selectors to map service to application deployment
+    env: production
+    app: survivor
+    tier: backend
+  ports:
+      - port: 8000
+        targetPort: 8000
+#        nodePort: 30088  # expose application service on Node Port 30088
