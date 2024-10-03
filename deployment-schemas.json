@@ -1,0 +1,855 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema#",
+  "type": "object",
+  "properties": {
+    "configSpec": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/DeploymentConfigSpec"
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "DeploymentConfigSpec": {
+      "type": "object",
+      "description": "Configuration specification for a deployment.",
+      "additionalProperties": false,
+      "properties": {
+        "envNameSelector": {
+          "description": "It is used to match configurations to environment(s).",
+          "$ref": "#/definitions/EnvironmentSelector"
+        },
+        "spec": {
+          "type": "object",
+          "description": "Open object for configuration. Could be any of service, cron job, statefulset or job object.",
+          "anyOf": [
+            { "$ref": "#/definitions/ServiceSpec" },
+            { "$ref": "#/definitions/CronjobSpec" },
+            { "$ref": "#/definitions/StatefulsetSpec" },
+            { "$ref": "#/definitions/JobSpec" }
+          ]
+        }
+      },
+      "required": ["envNameSelector", "spec"]
+    },
+    "EnvironmentSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Selector to match a single environment",
+      "properties": {
+        "condition": {
+          "type": "string",
+          "description": "The condition to match the environment name. Could be one of the following: equals, suffix, prefix, contains, notContains, notEquals or list.",
+          "enum": ["equals", "suffix", "prefix", "contains", "notContains", "notEquals", "list"]
+        },
+        "value": {
+          "description": "The name(s) of the environment to match.",
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          ]
+        }
+      },
+      "required": ["condition", "value"],
+      "if": {
+        "properties": { "condition": { "const": "list" } }
+      },
+      "then": {
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "value": { "type": "string" }
+        }
+      }
+    },
+    "ServiceSpec": {
+      "allOf": [
+        { "$ref": "#/definitions/Spec"}
+      ],
+      "properties": {
+        "kind": {
+          "description": "The kind of deployment.",
+          "type": "string",
+          "enum": ["com.bitso.catalog.JavaService"]
+        },
+        "scaling": {
+          "description": "Scaling configuration for the service.",
+          "$ref": "#/definitions/Scaling"
+        },
+        "virtualServices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/VirtualServicesPatch"
+          },
+          "minItems": 1
+        },
+        "extAuthz": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "External authorization configuration",
+          "properties": {
+            "opa": {
+              "$ref": "#/definitions/OPA"
+            }
+          }
+        },
+        "extraPorts": {
+          "$ref": "#/definitions/ExtraPorts"
+        },
+        "probes": {
+          "$ref": "#/definitions/Probes"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CronjobSpec": {
+      "allOf": [
+        { "$ref": "#/definitions/Spec" }],
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "CronJob"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "duration": {
+          "type": "integer"
+        },
+        "suspend": {
+          "type": "boolean"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "JobSpec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Spec"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "Job$"
+        },
+        "duration": {
+          "type": "integer"
+        }
+      }
+
+    },
+    "StatefulsetSpec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Spec"
+        }
+      ],
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "Statefulset"
+        },
+        "storages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Storage"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "storages"
+      ],
+      "unevaluatedProperties": false
+    },
+    "Storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "default": "/data"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^\\d+(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$"
+        },
+        "class": {
+          "type": "string"
+        },
+        "accessModes": {
+          "type": "array",
+          "additionalProperties": false,
+          "items": {
+            "type": "string",
+            "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["name", "size", "class", "accessModes"]
+    },
+    "Spec": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "description": "The profile of the deployment. Could be one of the following: cpu-bound, memory-bound, io-bound.",
+          "enum": ["cpu-bound", "memory-bound", "io-bound"]
+        },
+        "footprint": {
+          "type": "string",
+          "description": "Resource mapping for the deployment. Could be one of the following: micro, small, medium, large, xlarge, 2xlarge, 3xlarge, 4xlarge. See https://bitsomx.atlassian.net/wiki/x/CoAH9",
+          "enum": ["micro", "small", "medium", "large", "xlarge", "2xlarge", "3xlarge", "4xlarge"]
+        },
+        "status": {
+          "$ref": "#/definitions/Status"
+        },
+        "commonLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "replicas": {
+          "type": "integer"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "appConfig": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "allOf": [
+              {
+                "not": {
+                  "pattern": "svc\\.cluster\\.local"
+                }
+              }]
+          },
+          "patternProperties": {
+            ".*(POSTGRES|KAFKA_BROKERS|REDIS_CLUSTER|REDIS_READONLY_CLUSTER).*": {
+              "not": {},
+              "description": "AppConfig should not contain infrastructure specific values."
+            },
+            "^(?!MICRONAUT_SERVER_PORT|GRPC_PORT|GRPC_SERVER_PORT).*PORT$": {
+              "not": {},
+              "description": "AppConfig should not contain service dependencies environment variables. Service dependencies should be defined in Estate catalog"
+            }
+          }
+        },
+        "appConfigAlias": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "Status": {
+      "type": "string",
+      "enum": ["operational", "non-operational", "retired"],
+      "default": "operational"
+    },
+    "Scaling": {
+      "type": "object",
+      "description": "Scaling configuration for the deployment",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": {
+          "description": "Number of replicas for the deployment.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min": {
+              "description": "Minimum number of replicas for the deployment.",
+              "type": "integer"
+            },
+            "max": {
+              "description": "Maximum number of replicas for the deployment.",
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "VirtualServicesPatch": {
+      "type": "object",
+      "description": "Virtual service configuration",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Name to uniquely identify the virtual service configuration",
+          "type": "string",
+          "minLength": 3
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of virtual service configuration. Could be one of the following: endpoint, page, mesh. \n Endpoint: Virtual service configuration for an api. \n Page: Virtual service configuration to access a webpage. Eg Nextjs pages. \n Mesh: Internal mesh virtual service configuration.",
+          "enum": ["endpoint", "page", "mesh"],
+          "default": "endpoint"
+        },
+        "spec": {
+          "$ref": "#/definitions/VirtualServiceSpec"
+        }
+      },
+      "required": ["name", "spec"]
+    },
+    "VirtualServiceSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Virtual service configuration. See https://istio.io/latest/docs/reference/config/networking/virtual-service/#VirtualService for more information",
+      "properties": {
+        "exportTo": {
+          "type": "array",
+          "description": "List of namespaces to which the virtual service is exported to. Exporting a virtual service allows it to be used by sidecars and gateways defined in other namespaces. This feature provides a mechanism for service owners and mesh administrators to control the visibility of virtual services across namespace boundaries.\n\nIf no namespaces are specified then the virtual service is exported to all namespaces by default.\n\nThe value “.” is reserved and defines an export to the same namespace that the virtual service is declared in. Similarly the value “*” is reserved and defines an export to all namespaces.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gateways": {
+          "description": "List of gateways to which the virtual service is bound to. The reserved word mesh is used to imply all the sidecars in the mesh. When this field is omitted, the default gateway (mesh) will be used, which would apply the rule to all sidecars in the mesh. If a list of gateway names is provided, the rules will apply only to the gateways. To apply the rules to both gateways and sidecars, specify mesh as one of the gateway names.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hosts": {
+          "description": "List of hosts to which the virtual service is bound to. The destination hosts to which traffic is being sent. Could be a DNS name with wildcard prefix or an IP address. Depending on the platform, short-names can also be used instead of a FQDN (i.e. has no dots in the name). In such a scenario, the FQDN of the host would be derived based on the underlying platform.\n\nA",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "http": {
+          "description": "An ordered list of route rules for HTTP traffic. HTTP routes will be applied to platform service ports using HTTP/HTTP2/GRPC protocols, gateway ports with protocol HTTP/HTTP2/GRPC/TLS-terminated-HTTPS and service entry ports using HTTP/HTTP2/GRPC protocols. The first rule matching an incoming request is used.\n\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HTTPRoute"
+          }
+        },
+        "tcp": {
+          "type": "array",
+          "description": "An ordered list of route rules for opaque TCP traffic. TCP routes will be applied to any port that is not a HTTP or TLS port. The first rule matching an incoming request is used.\n\n",
+          "items": {
+            "$ref": "#/definitions/TCPRoute"
+          }
+        },
+        "tls": {
+          "type": "array",
+          "description": "An ordered list of route rule for non-terminated TLS & HTTPS traffic. Routing is typically performed using the SNI value presented by the ClientHello message. TLS routes will be applied to platform service ports named ‘https-’, ’tls-’, unterminated gateway ports using HTTPS/TLS protocols (i.e. with “passthrough” TLS mode) and service entry ports using HTTPS/TLS protocols. The first rule matching an incoming request is used. NOTE: Traffic ‘https-’ or ’tls-’ ports without associated virtual service will be treated as opaque TCP traffic.",
+          "items": {
+            "$ref": "#/definitions/TLSRoute"
+          }
+        }
+      }
+    },
+    "TLSRoute": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "match": {
+              "type": "array",
+              "items": {
+                  "$ref": "#/definitions/TLSMatchAttributes"
+              }
+            },
+            "route": {
+              "type": "array",
+              "items": {
+                  "$ref": "#/definitions/Route"
+              }
+            }
+        }
+    },
+    "TCPRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "match": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/L4MatchAttributes"
+          }
+        },
+        "route": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Route"
+          }
+        }
+      }
+    },
+    "L4MatchAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer"
+        },
+        "destinationSubnet": {
+          "type": "string"
+        },
+        "sourceNamespace": {
+          "type": "string"
+        },
+        "gateways": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "TLSMatchAttributes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sniHosts"],
+        "properties": {
+            "sniHosts": {
+              "type": "array",
+              "items": {
+                  "type": "string"
+              }
+            },
+            "destinationSubnets": {
+              "type": "array",
+              "items": {
+                  "type": "string"
+              }
+            },
+            "gateways": {
+              "type": "array",
+              "items": {
+                  "type": "string"
+              }
+            },
+            "sourceLabels": {
+              "type": "object",
+              "additionalProperties": {
+                  "type": "string",
+                  "value": {
+                  "type": "string"
+                  }
+              }
+            },
+            "sourceNamespace": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer"
+            }
+        }
+    },
+    "HTTPRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "corsPolicy": {
+          "$ref": "#/definitions/CorsPolicy"
+        },
+        "headers": {
+          "$ref": "#/definitions/Headers"
+        },
+        "match": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HttpMatchRequest"
+          }
+        },
+        "rewrite": {
+          "$ref": "#/definitions/Rewrite"
+        },
+        "route": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Route"
+          }
+        },
+        "timeout": {
+          "type": "string"
+        }
+      }
+    },
+    "Rewrite": {
+      "type": "object",
+      "description": "HTTPRewrite can be used to rewrite specific parts of a HTTP request before forwarding the request to the destination. Rewrite primitive can be used only with HTTPRouteDestination. The following example demonstrates how to rewrite the URL prefix for api call (/ratings) to ratings service before making the actual API call.\n\n",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "type": "object",
+          "description": "rewrite the path (or the prefix) portion of the URI with this value. If the original URI was matched based on prefix, the value provided in this field will replace the corresponding matched prefix.\n\n",
+          "additionalProperties": false,
+          "properties": {
+            "prefix": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "Route": {
+      "description": "Each routing rule is associated with one or more service versions (see glossary in beginning of document). Weights associated with the version determine the proportion of traffic it receives. ",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["destination"],
+      "properties": {
+        "destination": {
+          "type": "object",
+          "description": "Destination uniquely identifies the instances of a service to which the request/connection should be forwarded to.\n\n",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "description": "\t\nThe name of a service from the service registry. Service names are looked up from the platform’s service registry (e.g., Kubernetes services, Consul services, etc.) and from the hosts declared by ServiceEntry. Traffic forwarded to destinations that are not found in either of the two, will be dropped.",
+              "type": "string"
+            },
+            "port": {
+              "type": "object",
+              "description": "Specifies the port on the host that is being addressed. If a service exposes only a single port it is not required to explicitly select the port.\n\n",
+              "additionalProperties": false,
+              "properties": {
+                "number": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "weight": {
+          "description": "Weight specifies the relative proportion of traffic to be forwarded to the destination. A destination will receive weight/(sum of all weights) requests. If there is only one destination in a rule, it will receive all traffic. Otherwise, if weight is 0, the destination will not receive any traffic.\n\n",
+          "type": "integer"
+        }
+      }
+    },
+    "CorsPolicy": {
+      "type": "object",
+      "description": "CORS policy configuration",
+      "additionalProperties": false,
+      "properties": {
+        "allowCredentials": {
+          "type": "boolean",
+          "description": "Indicates whether the request can include user credentials like cookies, HTTP authentication or client side SSL certificates."
+        },
+        "allowHeaders": {
+          "type": "array",
+          "description": "List of headers that are allowed to be sent in the request.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowMethods": {
+          "type": "array",
+          "description": "List of HTTP methods that are allowed to be used in the request.",
+          "items": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"]
+          }
+        },
+        "allowOrigins": {
+          "type": "array",
+          "description": "List of origins that are allowed to make requests to the service.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exposeHeaders": {
+          "type": "array",
+          "description": "List of headers that are allowed to be exposed in the response.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maxAge": {
+          "description": "The maximum amount of time that a preflight request is valid.",
+          "type": "string"
+        }
+      }
+    },
+    "Headers": {
+      "type": "object",
+      "additionalProperties": false,
+
+      "properties": {
+        "request": {
+          "description": "Header manipulation rules to apply before forwarding a request to the destination service\n\n",
+          "additionalProperties": false,
+          "$ref": "#/definitions/HeaderOperations"
+        },
+        "response": {
+          "description": "Header manipulation rules to apply before returning a response to the caller\n\n",
+          "additionalProperties": false,
+          "$ref": "#/definitions/HeaderOperations"
+        }
+      }
+    },
+    "HttpMatchRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "description": "URI to match. URI to match values are case-sensitive and formatted as follows:\n\nexact: \"value\" for exact string match\n\nprefix: \"value\" for prefix-based match\n\nregex: \"value\" for RE2 style regex-based match.\n\n",
+          "$ref": "#/definitions/StringMatch"
+        },
+        "scheme": {
+          "description": "Scheme to match. \t\nURI Scheme values are case-sensitive and formatted as follows:\n\nexact: \"value\" for exact string match\n\nprefix: \"value\" for prefix-based match\n\nregex: \"value\" for RE2 style regex-based match.",
+          "$ref": "#/definitions/StringMatch"
+        },
+        "method": {
+          "description": "HTTP method to match. HTTP Method values are case-sensitive and formatted as follows:\n\nexact: \"value\" for exact string match\n\nprefix: \"value\" for prefix-based match\n\nregex: \"value\" for RE2 style regex-based match.",
+          "$ref": "#/definitions/StringMatch"
+        },
+        "authority": {
+          "author": "Authority to match. HTTP Authority values are case-sensitive and formatted as follows:\n\nexact: \"value\" for exact string match\n\nprefix: \"value\" for prefix-based match\n\nregex: \"value\" for RE2 style regex-based match.",
+          "$ref": "#/definitions/StringMatch"
+        },
+        "headers": {
+          "type": "object",
+          "description": "The header keys must be lowercase and use hyphen as the separator, e.g. x-request-id.\n\nHeader values are case-sensitive and formatted as follows:\n\nexact: \"value\" for exact string match\n\nprefix: \"value\" for prefix-based match\n\nregex: \"value\" for RE2 style regex-based match.",
+          "additionalProperties": {
+            "$ref": "#/definitions/StringMatch"
+          }
+        }
+      }
+    },
+    "StringMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exact": {
+          "description": "The value must be an exact match.",
+          "type": "string"
+        },
+        "prefix": {
+          "description": "The value must have a prefix match.",
+          "type": "string"
+        },
+        "regex": {
+          "description": "The value must match the regular expression.",
+          "type": "string"
+        }
+      }
+    },
+    "ExtraPorts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ExtraPort"
+      }
+    },
+    "ExtraPort": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "description": "The protocol for the extra port. Could be one of the following: http, grpc, proto.",
+          "enum": ["http", "grpc", "proto"]
+        },
+        "port": {
+          "description": "The port number for the extra port.",
+          "type": "integer"
+        }
+      },
+      "required": ["protocol", "port"]
+    },
+    "OPA": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "description": "Indicates whether the external authorization is disabled.",
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "string",
+          "description": "The timeout for the external authorization. Value is one of the following: short, medium, long. \t\"short\":  \"200ms\"\n\t\"medium\": \"500ms\"\n\t\"long\":   \"800ms\"",
+          "enum": ["short", "medium", "long"]
+        },
+        "consoleLogging": {
+          "description": "Indicates whether the console logging should be enabled.",
+          "type": "boolean"
+        }
+      }
+    },
+    "HeaderOperations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "add": {
+          "type": "object",
+          "description": "Append the given values to the headers specified by keys (will create a comma-separated list of values)",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z0-9_-]+$": {
+              "type": "string"
+            }
+          }
+        },
+        "remove": {
+          "type": "array",
+          "description": "Remove the specified headers",
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "type": "object",
+          "description": "Overwrite the headers specified by key with the given values",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z0-9_-]+$": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "Probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startupProbe": {
+          "description": "Startup probes are used to know when a container application has started. This can be used to avoid sending requests to a container that is not ready to respond.",
+          "$ref": "#/definitions/Probe"
+        },
+        "livenessProbe": {
+          "description": "Liveness probes are used to know when a container is alive or dead. They are used to determine when to restart a container.",
+          "$ref": "#/definitions/Probe"
+        },
+        "readinessProbe": {
+          "description": "Readiness probes are used to know when a container is ready to start accepting traffic.",
+          "$ref": "#/definitions/Probe"
+        }
+      }
+    },
+    "Probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "initialDelaySeconds": {
+          "type": "integer",
+          "description": "Number of seconds after the container has started before liveness or readiness probes are initiated."
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "description": "How often (in seconds) to perform the probe."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "description": "Number of seconds after which the probe times out."
+        },
+        "successThreshold": {
+          "type": "integer",
+          "description": "Minimum consecutive successes for the probe to be considered successful after it fails."
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "description": "When a probe fails, Kubernetes will try `failureThreshold` times before giving up."
+        },
+        "exec": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Command to run inside the container."
+            }
+          }
+        },
+        "httpGet": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "port": {
+              "type": ["integer", "string"]
+            },
+            "host": {
+              "type": "string"
+            },
+            "scheme": {
+              "type": "string",
+              "enum": ["HTTP", "HTTPS"]
+            },
+            "httpHeaders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "grpc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "type": ["integer", "string"]
+            }
+          }
+        },
+        "tcpSocket": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "type": ["integer", "string"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
